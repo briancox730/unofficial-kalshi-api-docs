@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unofficial-kalshi-api-docs"
+version = "0.1.0"
+description = "Unofficial, practical reference + client for the Kalshi trading API: RSA-PSS auth, REST, WebSocket, and the undocumented gotchas."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["kalshi", "api", "trading", "websocket", "prediction-markets", "unofficial"]
+authors = [{ name = "unofficial-kalshi-api-docs contributors" }]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Developers",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "requests>=2.31",
+    "cryptography>=42.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/briancox730/unofficial-kalshi-api-docs"
+Documentation = "https://github.com/briancox730/unofficial-kalshi-api-docs/tree/main/docs"
+Issues = "https://github.com/briancox730/unofficial-kalshi-api-docs/issues"
+
+# The importable package is `kalshi`; the examples/docs/tests are repo content,
+# not part of the installed distribution.
+[tool.setuptools]
+packages = ["kalshi"]
+
+[tool.pytest.ini_options]
+# Lets `pytest` find the `kalshi` package from the repo root without installing.
+pythonpath = ["."]
+testpaths = ["tests"]

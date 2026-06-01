@@ -7,6 +7,8 @@ trading strategy — just the mechanics of talking to the API correctly.
     client = KalshiHttpClient.from_env()      # reads KALSHI_* env vars
     print(client.balance())
 """
+__version__ = "0.1.0"  # keep in sync with pyproject.toml
+
 from .auth import auth_headers, load_private_key, sign
 from .client import (
     BASE_URLS,

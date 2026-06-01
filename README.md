@@ -89,6 +89,28 @@ python examples/04_place_and_cancel_order.py SOME-TICKER --price 5 --confirm   #
 python examples/08_sell_to_close.py SOME-TICKER --confirm                       # demo
 ```
 
+## Install as a package
+
+```bash
+pip install -e .          # editable install; `import kalshi` works anywhere
+# or build a wheel:  python -m build   (then pip install dist/*.whl)
+```
+
+The importable package is `kalshi`. The examples and docs are repo content, not
+part of the installed distribution.
+
+## Development & tests
+
+The tests are offline — they generate a throwaway RSA key and never hit the
+network or need real credentials. They cover the two things people get wrong
+(the RSA-PSS signature and stripping the query from the signed path) plus the
+orderbook reconstruction and the client's path/body building.
+
+```bash
+pip install -e ".[dev]"   # installs pytest
+pytest                    # runs tests/ (configured via pyproject.toml)
+```
+
 ## Safety & disclaimer
 
 - **Demo by default.** Production trades real money — opt in explicitly.
