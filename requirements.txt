@@ -1,0 +1,7 @@
+# REST + auth
+requests>=2.31
+cryptography>=42.0
+
+# WebSocket examples (async). v13+ uses the `additional_headers` kwarg; the
+# WS client here falls back to `extra_headers` for older versions.
+websockets>=12.0

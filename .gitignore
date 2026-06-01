@@ -1,0 +1,20 @@
+# Secrets — NEVER commit these.
+.env
+.env.*
+!.env.example
+*.pem
+kalshi.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
