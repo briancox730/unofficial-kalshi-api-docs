@@ -12,12 +12,18 @@ discover. Plain Python: a small reusable client plus runnable, copy-paste exampl
 
 A few that will bite you:
 
-- **A "sell" is reported on the opposite side.** `sell yes` comes back as
-  `outcome_side=no`; your proceeds are `1 - taker_fill_cost/fill_count`.
+- **The v1 order endpoint is gone (`410`).** Kalshi sunset `POST /portfolio/orders`
+  on **2026-06-18**; orders now go to **`POST /portfolio/events/orders`**, which is
+  **YES-referenced** — one `side` (`bid`=buy YES / `ask`=sell YES) and one `price`,
+  not `action`/`yes_price`/`no_price`. The response is flat (no `status`, no `_fp`).
+  The client translates the old vocabulary for you; see gotcha #1.
+- **Your realized price is YES-referenced.** The fill response gives one
+  `average_fill_price` (YES VWAP); *your* price is it for a YES order, `1 - it` for
+  a NO order — one rule for buys and sells (`kalshi.our_fill_price`).
 - **To close a position, *sell the side you hold*.** Kalshi doesn't net YES/NO
   intraday — buying the opposite side **hedges, it doesn't flatten** (you end up
-  holding both until settlement). And a sell priced via `*_price_dollars` at the
-  bid can get booked as an opposite-side buy — use **integer cents**.
+  holding both until settlement). Sell the held side with **integer cents** at a
+  low floor.
 - **The orderbook is bids-only** — `yes_ask = 100 - best_no_bid`.
 - **`positions()` lags fills by ~1s** and returns stale state — poll it.
 - **`last_updated_ts` is an ISO string, not an int** (breaks naive parsers only

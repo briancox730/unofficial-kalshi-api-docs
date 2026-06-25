@@ -17,6 +17,12 @@ BASE_URLS = {
 }
 API_PREFIX = "/trade-api/v2"
 
+#: `self_trade_prevention_type` — REQUIRED in V2. "taker_at_cross" cancels the
+#: incoming taker portion on a self-cross (the conservative choice). The only
+#: other documented value is "maker". Used as the default in `place_order` /
+#: `to_v2_order_body`; defined here so it's in scope for those signatures.
+STP_TAKER_AT_CROSS = "taker_at_cross"
+
 
 class KalshiError(RuntimeError):
     """Raised on a non-2xx response; the message carries the status + body."""
@@ -111,7 +117,7 @@ class KalshiHttpClient:
             path += f"&ticker={ticker}"
         return self.get(path)
 
-    # --- order endpoints ---------------------------------------------------
+    # --- order endpoints (Kalshi V2 — see docs/gotchas.md #1) --------------
     def place_order(
         self,
         ticker,
@@ -126,52 +132,100 @@ class KalshiHttpClient:
         time_in_force="immediate_or_cancel",
         client_order_id=None,
         post_only=None,
+        self_trade_prevention_type=STP_TAKER_AT_CROSS,
     ):
-        """POST /portfolio/orders.
+        """POST /portfolio/events/orders  (Kalshi **V2** create endpoint).
 
-        side   : "yes" | "no"   (which contract)
+        Kalshi sunset the v1 `POST /portfolio/orders` on 2026-06-18 — it now
+        returns `410 {"code":"deprecated_v1_order_endpoint"}`. The V2 book is
+        **YES-referenced**: the wire body carries one `side` in {bid, ask} and a
+        single YES-referenced `price` — there is no `action`/`yes_price`/`no_price`.
+
+        This method keeps the familiar intent vocabulary and translates it to the
+        V2 wire format (see `to_v2_order_body`). The flat V2 response is normalized
+        back to a stable dict (see `normalize_order_response`).
+
+        side   : "yes" | "no"   (which contract you intend to trade)
         action : "buy" | "sell"
         count  : whole contracts (int)
 
-        Price: pass integer cents via `yes_price`/`no_price` (1-99), OR sub-cent
-        dollars via `yes_price_dollars`/`no_price_dollars` (e.g. "0.9980"). They
-        are mutually exclusive per side.
+        Price: integer cents via `yes_price`/`no_price` (1-99), OR sub-cent dollars
+        via `yes_price_dollars`/`no_price_dollars` ("0.9980"). Mutually exclusive
+        per side. Translated to a single YES-referenced 4-decimal dollar string with
+        exact integer (ten-thousandths) math, so the NO-side `1 - p` flip and the
+        deci-cent ticks never drift.
 
-        IMPORTANT (see docs/gotchas.md): to CLOSE a position, sell the side you
-        hold with INTEGER cents at a low floor. A sell priced via *_price_dollars
-        at the exact bid can get booked as an opposite-side buy that hedges
-        instead of flattening.
+        For a RESTING order pass `time_in_force="good_till_canceled"` explicitly
+        (don't rely on omission). `self_trade_prevention_type` is **required** in V2
+        ("taker_at_cross" is the conservative default).
+
+        Returns a normalized dict: `order_id`, `client_order_id`, `status`
+        (synthesized — V2 omits it), `fill_count`, `remaining_count`, `fill_price`
+        (YOUR side's realized $/contract, None if unfilled), `fees` (total), `raw`
+        (the flat V2 body).
         """
-        body = {
-            "ticker": ticker,
-            "side": side,
-            "action": action,
-            "count": count,
-            "time_in_force": time_in_force,
-            "client_order_id": client_order_id or str(uuid.uuid4()),
-        }
-        for key, val in (
-            ("yes_price", yes_price),
-            ("no_price", no_price),
-            ("yes_price_dollars", yes_price_dollars),
-            ("no_price_dollars", no_price_dollars),
-            ("post_only", post_only),
-        ):
-            if val is not None:
-                body[key] = val
-        return self._request("POST", f"{API_PREFIX}/portfolio/orders", body)
+        body = to_v2_order_body(
+            ticker, side, action, count,
+            time_in_force=time_in_force,
+            post_only=post_only,
+            yes_price=yes_price,
+            no_price=no_price,
+            yes_price_dollars=yes_price_dollars,
+            no_price_dollars=no_price_dollars,
+            client_order_id=client_order_id or str(uuid.uuid4()),
+            self_trade_prevention_type=self_trade_prevention_type,
+        )
+        resp = self._request("POST", f"{API_PREFIX}/portfolio/events/orders", body)
+        return normalize_order_response(side, action, time_in_force, resp)
 
     def get_order(self, order_id):
-        """GET /portfolio/orders/{id} -> {order}. Poll this for terminal status."""
+        """GET /portfolio/orders/{id} -> {order}.
+
+        Kalshi has **not published a V2 single-order GET**. The v1 path *may* still
+        resolve V2-created order IDs, but this is unverified — confirm against demo
+        before relying on it for live fill detection. The authoritative, unaffected
+        sources are `fills()` (GET /portfolio/fills) and the private WebSocket
+        `fill` channel. See docs/gotchas.md #1.
+        """
         return self.get(f"{API_PREFIX}/portfolio/orders/{order_id}")
 
-    def cancel_order(self, order_id):
-        """DELETE /portfolio/orders/{id}.
+    def fills(self, ticker=None, order_id=None, limit=None, cursor=None):
+        """GET /portfolio/fills — your executions (UNAFFECTED by the v2 migration).
 
-        Kalshi REDUCES rather than deletes; `reduced_by_fp` tells you how many
-        contracts were cancelled. reduced_by_fp <= 0 means it had already filled.
+        The authoritative record of what actually executed and the fees paid, and
+        the recommended way to detect fills on resting orders. Optional filters:
+        `ticker`, `order_id`. Returns `{fills: [...], cursor}` (cursor empty = last
+        page). Each fill carries `count`, a YES-referenced price, side, and fees.
         """
-        return self._request("DELETE", f"{API_PREFIX}/portfolio/orders/{order_id}")
+        params = []
+        if ticker:
+            params.append(f"ticker={ticker}")
+        if order_id:
+            params.append(f"order_id={order_id}")
+        if limit:
+            params.append(f"limit={limit}")
+        if cursor:
+            params.append(f"cursor={cursor}")
+        q = "&".join(params)
+        return self.get(f"{API_PREFIX}/portfolio/fills" + (f"?{q}" if q else ""))
+
+    def cancel_order(self, order_id):
+        """DELETE /portfolio/events/orders/{id}  (Kalshi **V2** cancel).
+
+        V2 returns a flat `{order_id, reduced_by, ts_ms}` — no `order` wrapper, no
+        `status`. Kalshi REDUCES rather than deletes; `reduced_by` is how many
+        contracts were actually cancelled. Returns a normalized dict: `order_id`,
+        `reduced_count` (float), `status` (synthesized), `raw`. `reduced_count <= 0`
+        means the order had already filled — you cancelled nothing.
+        """
+        resp = self._request("DELETE", f"{API_PREFIX}/portfolio/events/orders/{order_id}")
+        reduced = fp(resp.get("reduced_by"))
+        return {
+            "order_id": resp.get("order_id"),
+            "reduced_count": reduced,
+            "status": "canceled" if reduced > 0 else "unchanged",
+            "raw": resp,
+        }
 
 
 # --- small parse helpers for Kalshi's stringly-typed fixed-point fields -----
@@ -190,15 +244,135 @@ def position_contracts(market_position):
     return fp(market_position.get("position_fp"))
 
 
-def sell_proceeds(order):
-    """Realized $/contract for a SELL.
+# --- Kalshi V2 order translation (the YES-referenced wire format) -----------
+# V2 is YES-REFERENCED. There is no action / side(yes|no) / yes_price / no_price
+# on the wire: one `side` in {bid, ask} and one `price` (the YES limit price).
+# `bid` buys YES, `ask` sells YES; a NO order maps onto the YES book:
+#     buy NO @ n  ==  ask @ (1 - n)        sell NO @ n  ==  bid @ (1 - n)
+# Closed form: send `bid` iff (action == "buy") == (side == "yes").
+# (STP_TAKER_AT_CROSS is defined at the top of the module — it's the required
+# `self_trade_prevention_type` default.)
 
-    Kalshi reports a sell on the COMPLEMENT side, so `taker_fill_cost_dollars`
-    is the opposite-side cost; proceeds = 1 - cost/filled. Do not read the
-    response's own yes/no_price as your sale price.
+
+def _side_price_ttth(side, yes_price, no_price, yes_price_dollars, no_price_dollars):
+    """OUR side's limit price in ten-thousandths of a dollar (1c = 100). None if unset.
+
+    Whole-cent (`yes_price`/`no_price`) takes precedence over the sub-cent dollar
+    string (`*_price_dollars`). Integer ten-thousandths keep the `1 - p` NO flip and
+    the deci-cent ticks exact — no float drift (this is real money).
     """
-    filled = fp(order.get("fill_count_fp"))
-    cost = fp(order.get("taker_fill_cost_dollars"))
-    if filled <= 0:
+    if side == "yes":
+        if yes_price is not None:
+            return int(yes_price) * 100
+        if yes_price_dollars is not None:
+            return round(float(yes_price_dollars) * 10_000)
+    elif side == "no":
+        if no_price is not None:
+            return int(no_price) * 100
+        if no_price_dollars is not None:
+            return round(float(no_price_dollars) * 10_000)
+    else:
+        raise ValueError(f"side must be 'yes' or 'no', got {side!r}")
+    return None
+
+
+def to_v2_order_body(
+    ticker,
+    side,
+    action,
+    count,
+    *,
+    time_in_force="immediate_or_cancel",
+    post_only=None,
+    yes_price=None,
+    no_price=None,
+    yes_price_dollars=None,
+    no_price_dollars=None,
+    client_order_id=None,
+    self_trade_prevention_type=STP_TAKER_AT_CROSS,
+):
+    """Translate intent (side/action/price) into Kalshi's V2 create body.
+
+    Returns the exact JSON dict POSTed to `/portfolio/events/orders`. Raises
+    ValueError if no price is set for the chosen side or the resulting
+    YES-referenced price falls outside (0, 1).
+    """
+    if action not in ("buy", "sell"):
+        raise ValueError(f"action must be 'buy' or 'sell', got {action!r}")
+    is_bid = (action == "buy") == (side == "yes")
+    side_ttth = _side_price_ttth(
+        side, yes_price, no_price, yes_price_dollars, no_price_dollars
+    )
+    if side_ttth is None:
+        raise ValueError(f"no price set for {side!r} side")
+    yes_ttth = side_ttth if side == "yes" else 10_000 - side_ttth
+    if not (1 <= yes_ttth <= 9_999):
+        raise ValueError(f"YES-referenced price {yes_ttth}/10000 out of (0, 1)")
+    body = {
+        "ticker": ticker,
+        "side": "bid" if is_bid else "ask",
+        "count": f"{int(count)}.00",                # V2 wants a fixed-point STRING
+        "price": f"0.{yes_ttth:04d}",               # yes_ttth in [1,9999] -> "0.NNNN"
+        "self_trade_prevention_type": self_trade_prevention_type,  # REQUIRED in V2
+    }
+    if time_in_force is not None:
+        body["time_in_force"] = time_in_force
+    if post_only:
+        body["post_only"] = True
+    if client_order_id:
+        body["client_order_id"] = client_order_id
+    return body
+
+
+def our_fill_price(side, resp):
+    """OUR side's realized $/contract from a V2 order response (None if unfilled).
+
+    `average_fill_price` is YES-referenced; our price is it directly for a YES
+    order and its complement for a NO order. ONE rule for both buys and sells —
+    it already encodes the old v1 `1 - taker_fill_cost/fill_count` arithmetic.
+    """
+    avg = resp.get("average_fill_price")
+    if avg is None:
         return None
-    return max(0.0, min(1.0, 1.0 - cost / filled))
+    yes = float(avg)
+    return yes if side == "yes" else 1.0 - yes
+
+
+def synth_status(resp, time_in_force):
+    """Synthesize an order `status` (V2 omits it) from fill/remaining + TIF.
+
+    Returns "executed" | "canceled" | "resting". A remainder is only `resting`
+    under GTC-equivalent TIF; IOC/FOK cancel whatever didn't fill immediately.
+    """
+    fill = fp(resp.get("fill_count"))
+    rem = fp(resp.get("remaining_count"))
+    if rem == 0:
+        return "executed" if fill > 0 else "canceled"
+    if time_in_force in (None, "good_till_canceled"):
+        return "resting"
+    return "canceled"
+
+
+def normalize_order_response(side, action, time_in_force, resp):
+    """Fold a flat V2 create response into a stable, documented dict.
+
+    Keys: `order_id`, `client_order_id`, `status`, `fill_count`,
+    `remaining_count`, `fill_price` (our side's realized $/ct, None if unfilled),
+    `fees` (total $ = average_fee_paid x fill_count), `raw` (the flat V2 body).
+    """
+    fill_count = fp(resp.get("fill_count"))
+    price = our_fill_price(side, resp)
+    if price is not None:
+        assert 0.0 <= price <= 1.0, f"fill_price out of range: {price}"
+    per_ct_fee = resp.get("average_fee_paid")
+    fees = float(per_ct_fee) * fill_count if per_ct_fee is not None else 0.0
+    return {
+        "order_id": resp.get("order_id"),
+        "client_order_id": resp.get("client_order_id"),
+        "status": synth_status(resp, time_in_force),
+        "fill_count": fill_count,
+        "remaining_count": fp(resp.get("remaining_count")),
+        "fill_price": price,
+        "fees": fees,
+        "raw": resp,
+    }

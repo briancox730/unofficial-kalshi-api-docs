@@ -1,8 +1,11 @@
 """Place a small resting limit order, then cancel it.
 
-Shows order placement and that DELETE "reduces" rather than deletes: the response
-carries `reduced_by_fp` (how many contracts were cancelled; <= 0 means it had
-already filled). Uses a low non-marketable buy so it rests, then cancels it.
+Shows the Kalshi **V2** order path (the v1 `POST /portfolio/orders` was sunset
+2026-06-18 — see docs/gotchas.md #1). `place_order` translates side/action/price
+into the YES-referenced V2 body and normalizes the flat response. DELETE
+"reduces" rather than deletes: the result carries `reduced_count` (how many
+contracts were cancelled; <= 0 means it had already filled). Uses a low
+non-marketable GTC buy so it rests, then cancels it.
 
 Demo by default. Refuses prod unless KALSHI_ENV=prod. Needs --confirm to send.
 
@@ -27,17 +30,18 @@ def main():
         return
 
     price_field = "yes_price" if args.side == "yes" else "no_price"
-    resp = client.place_order(
+    # GTC so the (non-marketable) order rests instead of cancelling immediately.
+    order = client.place_order(
         args.ticker, side=args.side, action="buy", count=1,
         time_in_force="good_till_canceled", **{price_field: args.price},
     )
-    order = resp.get("order", resp)
-    order_id = order.get("order_id")
-    print(f"placed: id={order_id} status={order.get('status')}")
+    order_id = order["order_id"]
+    print(f"placed: id={order_id} status={order['status']} "
+          f"(status is synthesized — V2 omits it)")
 
     time.sleep(0.5)
     cancel = client.cancel_order(order_id)
-    print(f"cancel: reduced_by_fp={cancel.get('reduced_by_fp')} "
+    print(f"cancel: reduced_count={cancel['reduced_count']} status={cancel['status']} "
           f"(<= 0 would mean the order had already filled)")
 
 

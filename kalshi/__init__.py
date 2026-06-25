@@ -12,11 +12,15 @@ __version__ = "0.1.0"  # keep in sync with pyproject.toml
 from .auth import auth_headers, load_private_key, sign
 from .client import (
     BASE_URLS,
+    STP_TAKER_AT_CROSS,
     KalshiError,
     KalshiHttpClient,
     fp,
+    normalize_order_response,
+    our_fill_price,
     position_contracts,
-    sell_proceeds,
+    synth_status,
+    to_v2_order_body,
 )
 from .orderbook import OrderBook
 from .ws import WS_URLS, KalshiWsClient, stream_orderbook
@@ -25,6 +29,7 @@ __all__ = [
     "KalshiHttpClient",
     "KalshiError",
     "BASE_URLS",
+    "STP_TAKER_AT_CROSS",
     "OrderBook",
     "KalshiWsClient",
     "stream_orderbook",
@@ -34,5 +39,8 @@ __all__ = [
     "sign",
     "fp",
     "position_contracts",
-    "sell_proceeds",
+    "to_v2_order_body",
+    "our_fill_price",
+    "synth_status",
+    "normalize_order_response",
 ]
