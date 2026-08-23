@@ -1,5 +1,9 @@
 # unofficial-kalshi-api-docs
 
+[![CI](https://github.com/briancox730/unofficial-kalshi-api-docs/actions/workflows/ci.yml/badge.svg)](https://github.com/briancox730/unofficial-kalshi-api-docs/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+
 The practical, **unofficial** reference for the [Kalshi](https://kalshi.com)
 trading API — the auth scheme, the REST endpoints, the WebSocket protocol, and
 (most usefully) the **undocumented behaviours** that cost people time and money to
@@ -7,6 +11,10 @@ discover. Plain Python: a small reusable client plus runnable, copy-paste exampl
 
 > Not affiliated with Kalshi. Market-agnostic — this documents *how the API works*,
 > not what to trade. No trading strategy here, by design.
+
+_**Last verified against the live API: June 2026.** Kalshi can change the API at
+any time — when a claim here looks off, re-check against demo (and please
+[open an issue or PR](CONTRIBUTING.md))._
 
 ## The stuff that isn't in the official docs → [`docs/gotchas.md`](docs/gotchas.md)
 
@@ -129,5 +137,6 @@ pytest                    # runs tests/ (configured via pyproject.toml)
 ## Contributing
 
 Found another quirk, or something changed? PRs welcome — add it to
-[`docs/gotchas.md`](docs/gotchas.md) with a short *what / why / fix* and, ideally,
-how you verified it.
+[`docs/gotchas.md`](docs/gotchas.md) with a short *what / why / fix* and how you
+verified it. See **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for how to report a
+gotcha, how to verify against the live API, and the offline-test requirement.

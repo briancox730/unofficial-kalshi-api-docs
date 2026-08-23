@@ -4,6 +4,10 @@ The behaviours that aren't in the official docs and cost people time (and money)
 to discover. Each is **what → why → the fix**. Verified against the live API in
 2026; Kalshi can change any of this, so re-check against the demo environment.
 
+**Last verified: June 2026** (latest change tracked here: the v1 order endpoint
+sunset on 2026-06-18 — see gotcha #1). Spot something stale? Corrections welcome —
+see [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+
 ---
 
 ### 1. The v1 order endpoint is gone (410) — V2 is YES-referenced
