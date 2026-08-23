@@ -1,7 +1,7 @@
 """Client tests: URL/path/body building (no network) + the V2 order translation.
 
-The order-translation tests mirror riptide's `rest.rs` unit tests (the validated
-reference for the Kalshi V2 YES-referenced mapping). See docs/gotchas.md #1.
+The order-translation tests mirror a battle-tested production client's unit tests
+(the validated reference for the Kalshi V2 YES-referenced mapping). See docs/gotchas.md #1.
 """
 import pytest
 
