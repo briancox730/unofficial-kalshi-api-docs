@@ -1,5 +1,9 @@
 # unofficial-kalshi-api-docs
 
+[![CI](https://github.com/briancox730/unofficial-kalshi-api-docs/actions/workflows/ci.yml/badge.svg)](https://github.com/briancox730/unofficial-kalshi-api-docs/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+
 The practical, **unofficial** reference for the [Kalshi](https://kalshi.com)
 trading API — the auth scheme, the REST endpoints, the WebSocket protocol, and
 (most usefully) the **undocumented behaviours** that cost people time and money to
@@ -8,16 +12,26 @@ discover. Plain Python: a small reusable client plus runnable, copy-paste exampl
 > Not affiliated with Kalshi. Market-agnostic — this documents *how the API works*,
 > not what to trade. No trading strategy here, by design.
 
+_**Last verified against the live API: June 2026.** Kalshi can change the API at
+any time — when a claim here looks off, re-check against demo (and please
+[open an issue or PR](CONTRIBUTING.md))._
+
 ## The stuff that isn't in the official docs → [`docs/gotchas.md`](docs/gotchas.md)
 
 A few that will bite you:
 
-- **A "sell" is reported on the opposite side.** `sell yes` comes back as
-  `outcome_side=no`; your proceeds are `1 - taker_fill_cost/fill_count`.
+- **The v1 order endpoint is gone (`410`).** Kalshi sunset `POST /portfolio/orders`
+  on **2026-06-18**; orders now go to **`POST /portfolio/events/orders`**, which is
+  **YES-referenced** — one `side` (`bid`=buy YES / `ask`=sell YES) and one `price`,
+  not `action`/`yes_price`/`no_price`. The response is flat (no `status`, no `_fp`).
+  The client translates the old vocabulary for you; see gotcha #1.
+- **Your realized price is YES-referenced.** The fill response gives one
+  `average_fill_price` (YES VWAP); *your* price is it for a YES order, `1 - it` for
+  a NO order — one rule for buys and sells (`kalshi.our_fill_price`).
 - **To close a position, *sell the side you hold*.** Kalshi doesn't net YES/NO
   intraday — buying the opposite side **hedges, it doesn't flatten** (you end up
-  holding both until settlement). And a sell priced via `*_price_dollars` at the
-  bid can get booked as an opposite-side buy — use **integer cents**.
+  holding both until settlement). Sell the held side with **integer cents** at a
+  low floor.
 - **The orderbook is bids-only** — `yes_ask = 100 - best_no_bid`.
 - **`positions()` lags fills by ~1s** and returns stale state — poll it.
 - **`last_updated_ts` is an ISO string, not an int** (breaks naive parsers only
@@ -123,5 +137,6 @@ pytest                    # runs tests/ (configured via pyproject.toml)
 ## Contributing
 
 Found another quirk, or something changed? PRs welcome — add it to
-[`docs/gotchas.md`](docs/gotchas.md) with a short *what / why / fix* and, ideally,
-how you verified it.
+[`docs/gotchas.md`](docs/gotchas.md) with a short *what / why / fix* and how you
+verified it. See **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for how to report a
+gotcha, how to verify against the live API, and the offline-test requirement.

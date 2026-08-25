@@ -74,7 +74,7 @@ Each row is `[price_dollars, size]`. **Bids only**; derive asks as the complemen
            "price_dollars": "0.62", "delta_fp": "-3.5" } }
 ```
 `delta_fp` is a **change** in size (can be negative, fractional). **Accumulate
-exactly**; drop a level when its size nets to ~0. (See gotcha #11.)
+exactly**; drop a level when its size nets to ~0. (See gotcha #9.)
 
 ### `fill` (account channel — subscribe `["fill"]`, no tickers)
 ```json
@@ -85,7 +85,10 @@ exactly**; drop a level when its size nets to ~0. (See gotcha #11.)
            "post_position_fp": "1.00", "ts_ms": 1717200000000 } }
 ```
 `post_position_fp` is your signed position **after** the fill. This channel is the
-source of truth for executions.
+source of truth for executions — and, since Kalshi's V2 order API dropped the
+single-order GET, it is the recommended way to detect fills on **resting** orders
+(the REST fallback is `GET /portfolio/fills`). The `fill` channel is **unaffected**
+by the v1→v2 order-endpoint migration; see [gotchas.md](gotchas.md) #1.
 
 ### `error`
 `msg`: `{ "code": <int>, "msg": "…" }`.

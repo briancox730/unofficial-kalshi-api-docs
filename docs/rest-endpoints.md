@@ -13,9 +13,18 @@ headers (see [authentication.md](authentication.md)). Base URLs in
 | GET | `/markets/{ticker}` | one market |
 | GET | `/markets/{ticker}/orderbook` | bids-only book |
 | GET | `/portfolio/positions` | your open positions |
-| POST | `/portfolio/orders` | place an order |
-| GET | `/portfolio/orders/{id}` | poll an order |
-| DELETE | `/portfolio/orders/{id}` | cancel (reduce) an order |
+| GET | `/portfolio/fills` | your executions (authoritative) |
+| POST | `/portfolio/events/orders` | place an order (**V2** — see below) |
+| DELETE | `/portfolio/events/orders/{id}` | cancel (reduce) an order (**V2**) |
+| GET | `/portfolio/orders/{id}` | poll an order (**no V2 equivalent published** — see below) |
+
+> **⚠ v1 order endpoints were sunset on 2026-06-18.** `POST /portfolio/orders`
+> and `DELETE /portfolio/orders/{id}` now return
+> `410 {"code":"deprecated_v1_order_endpoint"}`. Use the V2 `/portfolio/events/orders`
+> paths. The V2 wire format is **YES-referenced** and the response shape changed —
+> see the [POST](#post-portfolioeventsorders-v2) section and
+> [gotchas.md](gotchas.md) #1. Read endpoints (markets, orderbook, positions,
+> balance, fills) are unchanged.
 
 ---
 
@@ -57,41 +66,98 @@ Each `market_position`: `ticker`, `position_fp` (**signed** string: + = yes,
 
 > Gotcha: this endpoint **lags fills ~1s** and returns the pre-order state. Poll.
 
-## POST /portfolio/orders
-Request body:
+## GET /portfolio/fills
+Your executions — the **authoritative** record of what filled and the fees paid,
+and the recommended way to detect fills on resting orders (the V2 order API
+dropped the single-order GET). Query params: `ticker`, `order_id`, `limit`,
+`cursor`. Returns `{ "fills": [...], "cursor": "" }`. Each fill carries `count`, a
+YES-referenced price, `side`, `is_taker`, fees, and `created_time`. **Unaffected**
+by the v1→v2 order migration.
+
+## POST /portfolio/events/orders  (V2)
+
+> The legacy `POST /portfolio/orders` was **sunset 2026-06-18** (`410`,
+> `deprecated_v1_order_endpoint`). This is the replacement. The client's
+> `place_order(side, action, …)` keeps the old intent vocabulary and translates
+> it to this body for you (`kalshi.to_v2_order_body`).
+
+V2 is **YES-referenced**: there is no `action`, no `side: yes|no`, and no
+`yes_price`/`no_price`. The body carries one `side` ∈ {`bid`, `ask`} and one
+`price` — the **YES** limit price as a 4-decimal dollar string.
 
 ```jsonc
 {
   "ticker": "…",
-  "side": "yes" | "no",            // which contract
-  "action": "buy" | "sell",
-  "count": 1,                      // whole contracts
+  "side": "bid" | "ask",               // bid BUYS yes, ask SELLS yes
+  "count": "1.00",                      // fixed-point STRING, not an int
+  "price": "0.5000",                    // YES-referenced, 4-decimal dollar string
+  "self_trade_prevention_type": "taker_at_cross",  // REQUIRED ("maker" is the other value)
   "time_in_force": "immediate_or_cancel" | "good_till_canceled" | "fill_or_kill",
-  "client_order_id": "uuid",       // idempotency key
-  // price: ONE of these per side —
-  "yes_price": 60,                 // integer cents 1-99
-  "no_price": 40,
-  "yes_price_dollars": "0.9980",   // OR sub-cent dollars string
-  "no_price_dollars": "0.0020",
-  "post_only": true                // optional: reject if it would take liquidity
+  "client_order_id": "uuid",           // optional idempotency key
+  "post_only": true                    // optional: reject if it would take liquidity
 }
 ```
 
-Returns `{ "order": <Order> }`. The `Order` includes `order_id`, `status`
-(`resting` | `executed` | `canceled`), `outcome_side`, `action`, the `_fp` count
-fields (`fill_count_fp`, `remaining_count_fp`, `initial_count_fp`), and the cost
-fields (`taker_fill_cost_dollars`, `taker_fees_dollars`, `maker_*`).
+**Mapping your intent → `side` + `price`** (`bid` iff `is_buy == is_yes`; a NO
+order maps onto the YES book as `1 − price`):
 
-> Gotchas: a **sell** is reported on the complement side (proceeds =
-> `1 - taker_fill_cost/fill_count`); to **close**, sell the held side with integer
-> cents (see gotchas #1, #2, #3). IOC can fill even against an empty-looking book;
-> the WS `fill` channel is the execution source of truth.
+| intent | V2 `side` | V2 `price` |
+|---|---|---|
+| buy YES 50¢  | `bid` | `0.5000` |
+| sell YES 85¢ | `ask` | `0.8500` |
+| buy NO 30¢   | `ask` | `0.7000`  (1 − 0.30) |
+| sell NO 30¢  | `bid` | `0.7000` |
+
+Compute the price in integer **ten-thousandths** (1¢ = 100) so the `1 − p` NO flip
+and sub-cent "deci-cent" ticks stay exact — e.g. NO `0.9980` → `0.0020`, never
+`0.0020000001`. The client does this for you.
+
+**Response is flat** — no `order` wrapper, no `status`, and none of the v1 `_fp`
+or `taker_fill_cost_dollars` fields:
+
+```jsonc
+{
+  "order_id": "…",
+  "client_order_id": "…",
+  "fill_count": "1.00",
+  "remaining_count": "0.00",
+  "average_fill_price": "0.9300",   // YES-referenced VWAP; present only if fill > 0
+  "average_fee_paid": "0.0200",     // PER-CONTRACT, not total
+  "ts_ms": 1715793600123
+}
+```
+
+Derive the things the v1 `Order` used to give you (the client's
+`normalize_order_response` does all of this):
+
+- **`status`** — synthesize it: `remaining_count == 0` → `executed` if any fill
+  else `canceled`; otherwise `resting` under GTC, `canceled` under IOC/FOK.
+- **Your realized $/contract** — `average_fill_price` is YES-referenced, so it's
+  your price directly for a YES order and `1 − average_fill_price` for a NO order
+  (one rule for buys *and* sells; it already encodes the old v1 complement).
+- **Total fees** — `average_fee_paid × fill_count` (the field is per-contract).
+
+> Gotchas: to **close**, sell the side you hold (Kalshi doesn't net YES/NO
+> intraday — see gotchas #2). IOC can fill even against an empty-looking book;
+> the WS `fill` channel / `GET /portfolio/fills` are the execution source of truth.
 
 ## GET /portfolio/orders/{id}
-`{ "order": <Order> }`. Poll after an IOC to reach a terminal `status`
-(`executed` | `canceled`).
+Kalshi has **not published a V2 single-order GET**. The v1 path *may* still
+resolve V2-created order IDs (returning `{ "order": <Order> }`), but this is
+**unverified** — confirm against demo before relying on it. For terminal status of
+an IOC, the create response is already terminal (synthesize `status` from
+`fill_count`/`remaining_count`). For **resting** orders, detect fills via
+`GET /portfolio/fills` or the WS `fill` channel instead of polling here.
 
-## DELETE /portfolio/orders/{id}
-`{ "order": <Order>, "reduced_by_fp": "1.00" }`. Kalshi **reduces** the order;
-`reduced_by_fp` is how many contracts were cancelled. `<= 0` means it had already
-filled.
+## DELETE /portfolio/events/orders/{id}  (V2)
+Flat response — no `order` wrapper, no `status`:
+
+```jsonc
+{ "order_id": "…", "reduced_by": "1.00", "ts_ms": 1715793660456 }
+```
+
+Kalshi **reduces** rather than deletes; `reduced_by` is how many contracts were
+actually cancelled. `reduced_by <= 0` (`"0.00"`) means the order had **already
+filled** — you cancelled nothing (don't then try to "undo" the fill). The client
+returns `{ order_id, reduced_count, status, raw }` with
+`status = "canceled"` when `reduced_count > 0`.

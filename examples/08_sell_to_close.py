@@ -1,14 +1,13 @@
-"""How to actually CLOSE (flatten) a Kalshi position — the #1 gotcha, demonstrated.
+"""How to actually CLOSE (flatten) a Kalshi position — gotcha #2, demonstrated.
 
 Why this is tricky:
-  * A "sell" is filled on the COMPLEMENT side (sell yes -> reported on the no
-    side at 1 - price). Realized proceeds = 1 - taker_fill_cost/fill_count.
+  * Under the V2 order path the response is YES-referenced: your realized price is
+    `average_fill_price` for a YES order and `1 - average_fill_price` for a NO
+    order. `place_order` returns this as `fill_price` (one rule, both sides).
   * Kalshi does NOT net yes vs no intraday — buying the opposite side does not
     flatten; you'd hold BOTH lots until settlement.
   * Therefore, to flatten you must SELL the side you hold, with INTEGER cents at
-    a low floor (the IOC still fills at the best bid >= floor). A sell priced via
-    *_price_dollars at the exact bid can get booked as an opposite-side BUY that
-    HEDGES instead of reducing.
+    a low floor (the IOC still fills at the best bid >= floor).
 
 This demo buys 1 contract, then sells-to-close, printing the net position
 before/after (it should end at 0). Demo by default; refuses prod unless
@@ -20,7 +19,7 @@ import argparse
 import time
 
 from _common import client_from_env, require_confirm
-from kalshi import position_contracts, sell_proceeds
+from kalshi import position_contracts
 
 
 def net_for(client, ticker):
@@ -59,9 +58,8 @@ def main():
     print("after buy:   net =", poll_net(client, args.ticker))
 
     # 2) close it: SELL the side we hold, integer cents, low floor.
-    resp = client.place_order(args.ticker, side=args.side, action="sell", count=1, **{pf: args.floor})
-    order = resp.get("order", resp)
-    proceeds = sell_proceeds(order)
+    order = client.place_order(args.ticker, side=args.side, action="sell", count=1, **{pf: args.floor})
+    proceeds = order["fill_price"]   # our side's realized $/contract, None if no fill
     print(f"sell proceeds ~ ${proceeds:.3f}/contract" if proceeds is not None else "sell: no fill")
     print("after close: net =", poll_net(client, args.ticker), " (0 == flattened correctly)")
 
